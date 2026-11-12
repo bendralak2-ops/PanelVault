@@ -12,7 +12,8 @@ import android.view.Gravity
 import android.widget.*
 import java.io.File
 import java.util.zip.ZipFile
-import com.github.junrar.Archive
+import me.zhanghai.android.libarchive.Archive
+import me.zhanghai.android.libarchive.ArchiveEntry
 
 class MainActivity : Activity() {
     private val library by lazy { File(filesDir, "comics").apply { mkdirs() } }
@@ -113,13 +114,27 @@ class MainActivity : Activity() {
                     }
                     "cbr" -> {
                         val format = archiveFormat(file)
-                        if (format == "RAR5") error("RAR5 archive detected. This version cannot decode RAR5 yet.")
-                        if (format != "RAR4") error("Unsupported CBR format: $format")
-                        Archive(file).use { archive ->
-                        for (header in archive.fileHeaders) if (!header.isDirectory) add(header.fileName) { dest ->
-                            dest.outputStream().use { archive.extractFile(header,it) }
-                        }
-                        }
+                        if (format != "RAR4" && format != "RAR5") error("Unsupported CBR format: $format")
+                        val archive = Archive.readNew()
+                        try {
+                            Archive.readSupportFilterAll(archive)
+                            Archive.readSupportFormatRar(archive)
+                            Archive.readSupportFormatRar5(archive)
+                            Archive.readOpenFileName(archive, file.absolutePath.toByteArray(Charsets.UTF_8), 10240)
+                            while (true) {
+                                val entry = Archive.readNextHeader(archive)
+                                if (entry == 0L) break
+                                val name = ArchiveEntry.pathnameUtf8(entry) ?: ""
+                                if (ArchiveEntry.filetype(entry) == ArchiveEntry.AE_IFREG && image(name)) {
+                                    if (ArchiveEntry.sizeIsSet(entry) && ArchiveEntry.size(entry) > 100L * 1024 * 1024) error("Page too large")
+                                    add(name) { dest ->
+                                        ParcelFileDescriptor.open(dest, ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_TRUNCATE).use { fd ->
+                                            Archive.readDataIntoFd(archive, fd.fd)
+                                        }
+                                    }
+                                } else Archive.readDataSkip(archive)
+                            }
+                        } finally { Archive.readFree(archive) }
                     }
                 }
                 if (file.extension.lowercase() != "pdf" && found.isEmpty()) error("No supported image pages found")
