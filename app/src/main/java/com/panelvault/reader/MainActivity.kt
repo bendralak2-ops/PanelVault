@@ -5,6 +5,11 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.LinearGradient
+import android.graphics.Shader
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.View
@@ -42,6 +47,7 @@ class MainActivity : Activity() {
     private var libraryQuery = ""
     private var visibleCount = 60
     private var selectedSeries: String? = null
+    private var drawerOpen = false
     private var readerControlsVisible = true
     private var readerTop: View? = null
     private var readerBottom: View? = null
@@ -168,18 +174,89 @@ class MainActivity : Activity() {
         setTextColor(Color.WHITE)
         background = panelBackground(selected)
     }
+    private fun vaultLogo(): View {
+        return object : View(this) {
+            private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+            override fun onDraw(c: Canvas) {
+                super.onDraw(c)
+                val unit = height / 110f
+                c.save()
+                c.scale(unit, unit)
+                p.shader = LinearGradient(0f, 0f, 0f, 95f,
+                    intArrayOf(0xffd4f7ff.toInt(), 0xff5cc8ff.toInt(), 0xff1265ae.toInt()),
+                    null, Shader.TileMode.CLAMP)
+                p.style = Paint.Style.FILL
+                p.typeface = Typeface.create("sans-serif-condensed-black", Typeface.BOLD_ITALIC)
+                p.textSize = 46f
+                p.textScaleX = 0.86f
+                p.setShadowLayer(3f, 3f, 4f, Color.BLACK)
+                c.drawText("PANEL", 7f, 48f, p)
+                p.textSize = 43f
+                c.drawText("VAULT", 22f, 91f, p)
+                p.clearShadowLayer()
+                p.shader = null
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 1.1f
+                p.color = 0xffa5e9ff.toInt()
+                c.drawRoundRect(2f, 2f, 225f, 103f, 8f, 8f, p)
+                c.restore()
+            }
+        }
+    }
+    private fun comicHeading(title: String) = label(title, 20f, 0xfff2f7ff.toInt()).apply {
+        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD_ITALIC)
+        letterSpacing = 0.055f
+    }
+    private fun openDrawer() {
+        val options = arrayOf("COMICS", "SERIES", "RULEBOOKS", "ALL FILES",
+            "CONTINUE READING", "IMPORT FILES", "SORT & DISPLAY", "EXPORT CATALOG", "ABOUT")
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle("PANELVAULT  /  NAVIGATION")
+            .setItems(options) { _, index ->
+                when (index) {
+                    in 0..3 -> {
+                        librarySection = arrayOf("Comics", "Series", "Rulebooks", "All")[index]
+                        selectedSeries = null
+                        showLibrary()
+                    }
+                    4 -> { sortMode = "Recently read"; librarySection = "All"; showLibrary() }
+                    5 -> startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        type = "*/*"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    }, 12)
+                    6 -> {
+                        val choices = arrayOf("Title A–Z", "Title Z–A", "Recently added",
+                            "Recently read", "Cover grid", "List")
+                        android.app.AlertDialog.Builder(this).setTitle("SORT & DISPLAY")
+                            .setItems(choices) { _, choice ->
+                                if (choice >= 4) gridMode = choice == 4 else sortMode = choices[choice]
+                                showLibrary()
+                            }.show()
+                    }
+                    7 -> exportCatalog()
+                    8 -> android.app.AlertDialog.Builder(this).setTitle("PANELVAULT")
+                        .setMessage("Comic-first offline library. CBZ, CBR and PDF support.")
+                        .setPositiveButton("OK", null).show()
+                }
+            }.create()
+        dialog.window?.setGravity(Gravity.LEFT or Gravity.TOP)
+        dialog.show()
+        dialog.window?.setGravity(Gravity.LEFT or Gravity.TOP)
+        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.75f).toInt(), -1)
+    }
     private fun comicCard(file: File, generation: Int): LinearLayout {
         val width = (resources.displayMetrics.widthPixels - dp(40)) / 2
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(9), dp(9), dp(9), dp(12))
+            setPadding(0, 0, 0, dp(8))
             background = panelBackground()
             elevation = dp(3).toFloat()
             layoutParams = LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
             setOnClickListener { open(file) }
             val cover = ImageView(this@MainActivity).apply {
                 setBackgroundColor(0xff253957.toInt())
-                scaleType = ImageView.ScaleType.FIT_CENTER
+                scaleType = ImageView.ScaleType.CENTER_CROP
                 setImageResource(android.R.drawable.ic_menu_gallery)
                 contentDescription = "Cover for ${comicTitle(file)}"
             }
@@ -190,6 +267,8 @@ class MainActivity : Activity() {
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
             }
+            name.setPadding(dp(8), dp(7), dp(8), 0)
+            name.typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
             addView(name, LinearLayout.LayoutParams(-1, dp(50)))
             val saved = progress.getInt(file.name, 0)
             val hasProgress = progress.contains(file.name)
@@ -246,9 +325,9 @@ class MainActivity : Activity() {
         val root = column()
         root.setPadding(dp(12), dp(12), dp(12), dp(6))
         val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        heading.addView(label("PANELVAULT", 29f).apply { typeface = Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
+        heading.addView(vaultLogo(), LinearLayout.LayoutParams(0, dp(84), 1f))
         val menuButton = navButton("☰ Menu", false) {}
-        menuButton.setOnClickListener { libraryMenu(menuButton) }
+        menuButton.setOnClickListener { openDrawer() }
         heading.addView(menuButton)
         root.addView(heading)
         root.addView(label("YOUR COMIC COLLECTION", 11f, 0xff8db5e5.toInt()))
@@ -297,7 +376,7 @@ class MainActivity : Activity() {
                 }
                 if (librarySection == "Series" && selectedSeries == null) {
                     val groups = filtered.groupBy { seriesName(it) }.toSortedMap(String.CASE_INSENSITIVE_ORDER)
-                    body.addView(label("SERIES  •  " + groups.size, 19f).apply { setPadding(0, dp(16), 0, dp(8)) })
+                    body.addView(comicHeading("SERIES  •  " + groups.size).apply { setPadding(0, dp(16), 0, dp(8)) })
                     groups.forEach { (name, issues) ->
                         body.addView(navButton(name + "   •   " + issues.size + " issues", false) {
                             selectedSeries = name
@@ -319,12 +398,12 @@ class MainActivity : Activity() {
                 val ongoing = sorted.filter { progress.contains(it.name) }
                     .sortedByDescending { progress.getLong("recent_" + it.name, 0L) }
                 if (ongoing.isNotEmpty() && libraryQuery.isBlank()) {
-                    body.addView(label("CONTINUE READING", 19f).apply { setPadding(0, dp(14), 0, dp(8)) })
+                    body.addView(comicHeading("CONTINUE READING").apply { setPadding(0, dp(14), 0, dp(8)) })
                     ongoing.take(5).forEach { file ->
                         body.addView(button(comicTitle(file) + " • Page " + (progress.getInt(file.name, 0) + 1)) { open(file) })
                     }
                 }
-                body.addView(label(librarySection.uppercase() + " • " + sorted.size, 19f).apply {
+                body.addView(comicHeading(librarySection.uppercase() + " • " + sorted.size).apply {
                     setPadding(0, dp(16), 0, dp(8))
                 })
                 if (sorted.isEmpty()) body.addView(label("Nothing here yet. Import a file or change your search.", 15f, 0xffaebdd0.toInt()))
