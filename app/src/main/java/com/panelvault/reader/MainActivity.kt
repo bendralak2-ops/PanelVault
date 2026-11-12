@@ -247,6 +247,8 @@ class MainActivity : Activity() {
     }
     private fun comicCard(file: File, generation: Int): LinearLayout {
         val width = (resources.displayMetrics.widthPixels - dp(40)) / 2
+        val coverWidth = width
+        val coverHeight = (coverWidth * 1.52f).toInt()
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, dp(8))
@@ -256,11 +258,11 @@ class MainActivity : Activity() {
             setOnClickListener { open(file) }
             val cover = ImageView(this@MainActivity).apply {
                 setBackgroundColor(0xff253957.toInt())
-                scaleType = ImageView.ScaleType.CENTER_CROP
+                scaleType = ImageView.ScaleType.FIT_CENTER
                 setImageResource(android.R.drawable.ic_menu_gallery)
                 contentDescription = "Cover for ${comicTitle(file)}"
             }
-            addView(cover, LinearLayout.LayoutParams(-1, dp(220)))
+            addView(cover, LinearLayout.LayoutParams(coverWidth, coverHeight))
             loadCover(file, cover, generation)
             val name = label(comicTitle(file), 14f).apply {
                 typeface = Typeface.DEFAULT_BOLD
@@ -272,7 +274,7 @@ class MainActivity : Activity() {
             addView(name, LinearLayout.LayoutParams(-1, dp(50)))
             val saved = progress.getInt(file.name, 0)
             val hasProgress = progress.contains(file.name)
-            addView(label(if (hasProgress) "Continue • Page ${saved + 1}" else file.extension.uppercase(), 12f, 0xff93b9e9.toInt()))
+            addView(label(if (hasProgress) "Continue • Page ${saved + 1}" else file.extension.uppercase(), 12f, 0xff93b9e9.toInt()).apply { setPadding(dp(8), 0, dp(8), 0) })
         }
     }
     private fun exportCatalog() {
