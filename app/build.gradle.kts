@@ -1,7 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "com.panelvault.reader"
-    compileSdk = 35
+    compileSdk = 37
     defaultConfig {
         applicationId = "com.panelvault.reader"
         minSdk = 26
