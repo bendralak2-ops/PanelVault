@@ -64,6 +64,26 @@ class LibraryReaderTest : ActivityInstrumentationTestCase2<MainActivity>(MainAct
         waitFor { visibleViews().filterIsInstance<TextView>().any { it.text.toString() == "2 / 3" } }
         assertEquals(1, active.getSharedPreferences("progress", 0).getInt(comic.name, -1))
         instrumentation.runOnMainSync { active.onBackPressed() }
+        val cbr = File(library, "Fixture RAR5.cbr")
+        instrumentation.context.assets.open("fixture.cbr").use { input -> cbr.outputStream().use { input.copyTo(it) } }
+        val pdf = File(library, "Fixture PDF.pdf")
+        PdfDocument().use { doc ->
+            repeat(2) { index ->
+                val page = doc.startPage(PdfDocument.PageInfo.Builder(180, 270, index + 1).create())
+                page.canvas.drawColor(Color.BLUE); doc.finishPage(page)
+            }
+            pdf.outputStream().use { doc.writeTo(it) }
+        }
+        listOf(cbr, pdf).forEach { file ->
+            instrumentation.runOnMainSync {
+                MainActivity::class.java.getDeclaredMethod("open", File::class.java).apply { isAccessible = true }.invoke(active, file)
+            }
+            waitFor { visibleViews().filterIsInstance<TextView>().any { it.text.toString() == "1 / 2" } }
+            instrumentation.runOnMainSync { visibleViews().filterIsInstance<TextView>().first { it.text.toString() == "Next" }.performClick() }
+            waitFor { visibleViews().filterIsInstance<TextView>().any { it.text.toString() == "2 / 2" } }
+            assertEquals(1, active.getSharedPreferences("progress", 0).getInt(file.name, -1))
+            instrumentation.runOnMainSync { active.onBackPressed() }
+        }
         waitFor { visibleViews().any { it.contentDescription == "Open navigation" } }
     }
 }

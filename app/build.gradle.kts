@@ -1,5 +1,8 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
+    useLibrary("android.test.runner")
+    useLibrary("android.test.base")
+    useLibrary("android.test.mock")
     namespace = "com.panelvault.reader"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
@@ -12,6 +15,9 @@ android {
         versionName = "0.4.0"
     }
     signingConfigs {
+        getByName("debug") {
+            System.getenv("PANELVAULT_DEBUG_KEYSTORE")?.let { storeFile = file(it) }
+        }
         create("persistentRelease") {
             val keyPath = System.getenv("PANELVAULT_KEYSTORE")
             if (keyPath != null) {
