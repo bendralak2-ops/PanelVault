@@ -4,6 +4,13 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.View
+import android.view.ViewGroup
+import android.text.TextUtils
+import java.util.concurrent.Executors
 import android.graphics.pdf.PdfRenderer
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
@@ -24,6 +31,9 @@ class MainActivity : Activity() {
     private var descriptor: ParcelFileDescriptor? = null
     private var bitmap: Bitmap? = null
     private var page = 0
+    private val coverWorker = Executors.newSingleThreadExecutor()
+    private var libraryGeneration = 0
+    private val coverDir by lazy { File(cacheDir, "covers").apply { mkdirs() } }
     private lateinit var picture: ImageView
     private lateinit var count: TextView
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
@@ -35,22 +45,150 @@ class MainActivity : Activity() {
         bitmap?.recycle(); bitmap = null
         pages = emptyList(); File(cacheDir,"pages").deleteRecursively()
     }
+    private fun dp(n: Int) = (resources.displayMetrics.density * n + 0.5f).toInt()
+    private fun label(text: String, size: Float, color: Int = Color.WHITE) = TextView(this).apply {
+        this.text = text; textSize = size; setTextColor(color)
+    }
+    private fun coverKey(file: File) = file.name.hashCode().toUInt().toString(16) + "_" + file.length() + "_" + file.lastModified()
+    private fun coverFile(file: File) = File(coverDir, coverKey(file) + ".jpg")
+    private fun extractCover(file: File): Bitmap? {
+        val bytes = when (file.extension.lowercase()) {
+            "cbz" -> ZipFile(file).use { zip ->
+                val first = zip.entries().asSequence().filter { !it.isDirectory && image(it.name) }
+                    .minByOrNull { it.name.lowercase() }
+                first?.let { zip.getInputStream(it).use { stream -> stream.readNBytes(12 * 1024 * 1024) } }
+            }
+            "cbr" -> {
+                val archive = Archive.readNew()
+                try {
+                    Archive.readSupportFilterAll(archive)
+                    Archive.readSupportFormatRar(archive)
+                    Archive.readSupportFormatRar5(archive)
+                    Archive.readOpenFileName(archive, file.absolutePath.toByteArray(Charsets.UTF_8), 10240)
+                    var candidate: ByteArray? = null
+                    while (true) {
+                        val entry = Archive.readNextHeader(archive)
+                        if (entry == 0L) break
+                        val name = ArchiveEntry.pathnameUtf8(entry) ?: ""
+                        if (ArchiveEntry.filetype(entry) == ArchiveEntry.AE_IFREG && image(name)) {
+                            val temp = File.createTempFile("cover", ".img", cacheDir)
+                            try {
+                                ParcelFileDescriptor.open(temp, ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_TRUNCATE).use { fd ->
+                                    Archive.readDataIntoFd(archive, fd.fd)
+                                }
+                                if (temp.length() <= 12L * 1024 * 1024) candidate = temp.readBytes()
+                            } finally { temp.delete() }
+                            break
+                        } else Archive.readDataSkip(archive)
+                    }
+                    candidate
+                } finally { Archive.readFree(archive) }
+            }
+            "pdf" -> {
+                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                    PdfRenderer(fd).use { renderer ->
+                        if (renderer.pageCount == 0) null else renderer.openPage(0).use { p ->
+                            val w = 260
+                            val h = (p.height.toDouble() * w / p.width).toInt().coerceAtLeast(1)
+                            return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+                                it.eraseColor(Color.WHITE)
+                                p.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            }
+                        }
+                    }
+                }
+            }
+            else -> null
+        }
+        if (bytes == null) return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 500) sample *= 2
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+    private fun loadCover(file: File, target: ImageView, generation: Int) {
+        val cached = coverFile(file)
+        if (cached.exists()) {
+            BitmapFactory.decodeFile(cached.path)?.let { target.setImageBitmap(it); return }
+        }
+        coverWorker.execute {
+            try {
+                val bmp = extractCover(file) ?: return@execute
+                cached.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 78, it) }
+                bmp.recycle()
+                runOnUiThread {
+                    if (generation == libraryGeneration) {
+                        BitmapFactory.decodeFile(cached.path)?.let { target.setImageBitmap(it) }
+                    }
+                }
+            } catch (_: Exception) { /* Leave the placeholder for unreadable covers. */ }
+        }
+    }
+    private fun comicTitle(file: File) = file.nameWithoutExtension.replace('_', ' ').trim()
+    private fun comicCard(file: File, generation: Int): LinearLayout {
+        val width = (resources.displayMetrics.widthPixels - dp(40)) / 2
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(5), dp(6), dp(5), dp(12))
+            layoutParams = LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setOnClickListener { open(file) }
+            val cover = ImageView(this@MainActivity).apply {
+                setBackgroundColor(0xff253957.toInt())
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setImageResource(android.R.drawable.ic_menu_gallery)
+                contentDescription = "Cover for ${comicTitle(file)}"
+            }
+            addView(cover, LinearLayout.LayoutParams(-1, dp(220)))
+            loadCover(file, cover, generation)
+            val name = label(comicTitle(file), 14f).apply {
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            }
+            addView(name, LinearLayout.LayoutParams(-1, dp(43)))
+            val saved = progress.getInt(file.name, 0)
+            val hasProgress = progress.contains(file.name)
+            addView(label(if (hasProgress) "Continue • Page ${saved + 1}" else file.extension.uppercase(), 12f, 0xff93b9e9.toInt()))
+        }
+    }
     private fun showLibrary() {
+        libraryGeneration++
+        val generation = libraryGeneration
         cleanup(); current = null
-        val view = column()
-        view.addView(TextView(this).apply { text = "PANELVAULT • OFFLINE LIBRARY"; textSize = 24f; setTextColor(-1) })
-        view.addView(button("Import CBZ / CBR / PDF") {
+        val root = column()
+        root.setPadding(dp(12), dp(12), dp(12), dp(6))
+        root.addView(label("PANELVAULT", 29f).apply { typeface = Typeface.DEFAULT_BOLD })
+        root.addView(label("YOUR OFFLINE COMIC LIBRARY", 11f, 0xff8db5e5.toInt()))
+        root.addView(button("+ Import CBZ / CBR / PDF") {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE)
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             }, 12)
         })
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        library.listFiles()?.filter { it.isFile }?.sortedBy { it.name.lowercase() }?.forEach { file ->
-            list.addView(button(file.name + " • Page " + (progress.getInt(file.name,0)+1)) { open(file) })
+        val scroll = ScrollView(this)
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val comics = library.listFiles()?.filter { it.isFile && it.extension.lowercase() in listOf("cbz", "cbr", "pdf") }
+            ?.sortedBy { it.name.lowercase() } ?: emptyList()
+        val ongoing = comics.filter { progress.contains(it.name) }.sortedByDescending { progress.getLong("recent_" + it.name, 0L) }
+        if (ongoing.isNotEmpty()) {
+            body.addView(label("CONTINUE READING", 19f).apply { setPadding(0, dp(14), 0, dp(8)) })
+            ongoing.take(5).forEach { file ->
+                body.addView(button("${comicTitle(file)}  •  Page ${progress.getInt(file.name, 0) + 1}") { open(file) })
+            }
         }
-        view.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1,0,1f))
-        setContentView(view)
+        body.addView(label("ALL COMICS  •  ${comics.size}", 19f).apply { setPadding(0, dp(16), 0, dp(8)) })
+        if (comics.isEmpty()) body.addView(label("Your library is empty. Import a comic to begin.", 15f, 0xffaebdd0.toInt()))
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        comics.chunked(2).forEach { pair ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            pair.forEach { row.addView(comicCard(it, generation)) }
+            grid.addView(row)
+        }
+        body.addView(grid)
+        scroll.addView(body)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        setContentView(root)
     }
     @Deprecated("Legacy Activity result")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -188,7 +326,7 @@ class MainActivity : Activity() {
         if(next==null) { toast("Unable to decode page");return }
         picture.setImageBitmap(null);bitmap?.recycle();bitmap=next;picture.setImageBitmap(next)
         count.text="${page+1} / ${pageCount()}"
-        current?.let { progress.edit().putInt(it.name,page).apply() }
+        current?.let { progress.edit().putInt(it.name,page).putLong("recent_" + it.name, System.currentTimeMillis()).apply() }
     }
     override fun onBackPressed() { if(current!=null) showLibrary() else super.onBackPressed() }
     override fun onDestroy() { cleanup();super.onDestroy() }
