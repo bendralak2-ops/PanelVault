@@ -56,7 +56,7 @@ class MainActivity : Activity() {
             "cbz" -> ZipFile(file).use { zip ->
                 val first = zip.entries().asSequence().filter { !it.isDirectory && image(it.name) }
                     .minByOrNull { it.name.lowercase() }
-                first?.let { zip.getInputStream(it).use { stream -> stream.readNBytes(12 * 1024 * 1024) } }
+                first?.let { zip.getInputStream(it).use { stream -> java.io.ByteArrayOutputStream().use { out ->\n                        val buffer = ByteArray(32768)\n                        while (out.size() < 12 * 1024 * 1024) {\n                            val n = stream.read(buffer, 0, minOf(buffer.size, 12 * 1024 * 1024 - out.size()))\n                            if (n < 0) break\n                            out.write(buffer, 0, n)\n                        }\n                        out.toByteArray()\n                    } } }
             }
             "cbr" -> {
                 val archive = Archive.readNew()
