@@ -74,6 +74,22 @@ class MainActivity : Activity() {
             runOnUiThread { toast("Imported $n comics"); showLibrary() }
         }.start()
     }
+    private fun archiveFormat(file: File): String {
+        val signature = ByteArray(8)
+        val n = file.inputStream().use { it.read(signature) }
+        if (n < 7) return "Unrecognized archive"
+        val prefix = byteArrayOf(0x52, 0x61, 0x72, 0x21, 0x1a, 0x07)
+        if (!prefix.indices.all { signature[it] == prefix[it] }) return "Not a RAR archive"
+        return when (signature[6].toInt() and 255) {
+            0 -> "RAR4"
+            1 -> "RAR5"
+            else -> "Unknown RAR version"
+        }
+    }
+    private fun diagnostic(e: Throwable): String {
+        val root = generateSequence(e) { it.cause }.last()
+        return "${root.javaClass.simpleName}: ${root.message ?: "no details"}"
+    }
     private fun image(name: String) = name.lowercase().matches(Regex(".*\\.(jpg|jpeg|png|webp|gif)"))
     private fun open(file: File) {
         Thread {
@@ -95,12 +111,18 @@ class MainActivity : Activity() {
                         val entries=zip.entries().asSequence().filter { !it.isDirectory && image(it.name) }.sortedBy { it.name.lowercase() }.toList()
                         for (entry in entries) add(entry.name) { dest -> zip.getInputStream(entry).use { input -> dest.outputStream().use { input.copyTo(it) } } }
                     }
-                    "cbr" -> Archive(file).use { archive ->
+                    "cbr" -> {
+                        val format = archiveFormat(file)
+                        if (format == "RAR5") error("RAR5 archive detected. This version cannot decode RAR5 yet.")
+                        if (format != "RAR4") error("Unsupported CBR format: $format")
+                        Archive(file).use { archive ->
                         for (header in archive.fileHeaders) if (!header.isDirectory) add(header.fileName) { dest ->
                             dest.outputStream().use { archive.extractFile(header,it) }
                         }
+                        }
                     }
                 }
+                if (file.extension.lowercase() != "pdf" && found.isEmpty()) error("No supported image pages found")
                 runOnUiThread {
                     try {
                         cleanupExceptCache()
@@ -112,9 +134,9 @@ class MainActivity : Activity() {
                         }
                         page=progress.getInt(file.name,0).coerceIn(0,(pageCount()-1).coerceAtLeast(0))
                         showReader()
-                    } catch(e:Exception) { toast(e.message ?: "Cannot open"); showLibrary() }
+                    } catch(e:Exception) { toast("Open failed: ${diagnostic(e)}"); showLibrary() }
                 }
-            } catch(e:Exception) { runOnUiThread { toast("Cannot read: ${e.message}") } }
+            } catch(e:Exception) { runOnUiThread { toast("Cannot read: ${diagnostic(e)}") } }
         }.start()
     }
     private fun cleanupExceptCache() { pdf?.close();pdf=null;descriptor?.close();descriptor=null;bitmap?.recycle();bitmap=null }
