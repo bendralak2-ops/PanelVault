@@ -67,13 +67,14 @@ class LibraryReaderTest : ActivityInstrumentationTestCase2<MainActivity>(MainAct
         val cbr = File(library, "Fixture RAR5.cbr")
         instrumentation.context.assets.open("fixture.cbr").use { input -> cbr.outputStream().use { input.copyTo(it) } }
         val pdf = File(library, "Fixture PDF.pdf")
-        PdfDocument().use { doc ->
+        val doc = PdfDocument()
+        try {
             repeat(2) { index ->
                 val page = doc.startPage(PdfDocument.PageInfo.Builder(180, 270, index + 1).create())
                 page.canvas.drawColor(Color.BLUE); doc.finishPage(page)
             }
             pdf.outputStream().use { doc.writeTo(it) }
-        }
+        } finally { doc.close() }
         listOf(cbr, pdf).forEach { file ->
             instrumentation.runOnMainSync {
                 MainActivity::class.java.getDeclaredMethod("open", File::class.java).apply { isAccessible = true }.invoke(active, file)
@@ -87,3 +88,4 @@ class LibraryReaderTest : ActivityInstrumentationTestCase2<MainActivity>(MainAct
         waitFor { visibleViews().any { it.contentDescription == "Open navigation" } }
     }
 }
+
