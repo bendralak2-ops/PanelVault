@@ -36,6 +36,9 @@ class MainActivity : Activity() {
     private var page = 0
     private var sortMode = "Title A–Z"
     private var gridMode = true
+    private var librarySection = "Comics"
+    private var libraryQuery = ""
+    private var visibleCount = 60
     private var readerControlsVisible = true
     private var readerTop: View? = null
     private var readerBottom: View? = null
@@ -60,6 +63,21 @@ class MainActivity : Activity() {
     private fun coverKey(file: File) = file.name.hashCode().toUInt().toString(16) + "_" + file.length() + "_" + file.lastModified()
     private fun coverFile(file: File) = File(coverDir, coverKey(file) + ".jpg")
     private fun extractCover(file: File): Bitmap? {
+        if (file.extension.equals("pdf", true)) {
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                PdfRenderer(fd).use { renderer ->
+                    if (renderer.pageCount == 0) return null
+                    renderer.openPage(0).use { p ->
+                        val w = 300
+                        val h = (p.height.toDouble() * w / p.width).toInt().coerceIn(1, 650)
+                        return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { cover ->
+                            cover.eraseColor(Color.WHITE)
+                            p.render(cover, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        }
+                    }
+                }
+            }
+        }
         val bytes: ByteArray? = when (file.extension.lowercase()) {
             "cbz" -> ZipFile(file).use { zip ->
                 val first = zip.entries().asSequence().filter { !it.isDirectory && image(it.name) }
@@ -182,42 +200,91 @@ class MainActivity : Activity() {
         menuButton.setOnClickListener { libraryMenu(menuButton) }
         heading.addView(menuButton)
         root.addView(heading)
-        root.addView(label("YOUR OFFLINE COMIC LIBRARY", 11f, 0xff8db5e5.toInt()))
+        root.addView(label("YOUR COMIC COLLECTION", 11f, 0xff8db5e5.toInt()))
         root.addView(button("+ Import CBZ / CBR / PDF") {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE)
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             }, 12)
         })
+        val search = EditText(this).apply {
+            hint = "Search comics and books"
+            setSingleLine(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(0xff9aadc9.toInt())
+            setText(libraryQuery)
+            background = GradientDrawable().apply {
+                setColor(0xff1d304b.toInt())
+                cornerRadius = dp(10).toFloat()
+            }
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+        }
+        root.addView(search, LinearLayout.LayoutParams(-1, dp(46)))
+        val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        listOf("Comics", "Rulebooks", "All").forEach { section ->
+            val tab = button(section) { librarySection = section; visibleCount = 60; showLibrary() }
+            tab.alpha = if (librarySection == section) 1f else 0.6f
+            tabs.addView(tab, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        root.addView(tabs)
         val scroll = ScrollView(this)
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val allComics = library.listFiles()?.filter { it.isFile && it.extension.lowercase() in listOf("cbz", "cbr", "pdf") } ?: emptyList()
-        val comics = when (sortMode) {
-            "Title Z–A" -> allComics.sortedByDescending { it.name.lowercase() }
-            "Recently added" -> allComics.sortedByDescending { it.lastModified() }
-            "Recently read" -> allComics.sortedByDescending { progress.getLong("recent_" + it.name, 0L) }
-            else -> allComics.sortedBy { it.name.lowercase() }
-        }
-        val ongoing = comics.filter { progress.contains(it.name) }.sortedByDescending { progress.getLong("recent_" + it.name, 0L) }
-        if (ongoing.isNotEmpty()) {
-            body.addView(label("CONTINUE READING", 19f).apply { setPadding(0, dp(14), 0, dp(8)) })
-            ongoing.take(5).forEach { file ->
-                body.addView(button("${comicTitle(file)}  •  Page ${progress.getInt(file.name, 0) + 1}") { open(file) })
-            }
-        }
-        body.addView(label("ALL COMICS  •  ${comics.size}", 19f).apply { setPadding(0, dp(16), 0, dp(8)) })
-        if (comics.isEmpty()) body.addView(label("Your library is empty. Import a comic to begin.", 15f, 0xffaebdd0.toInt()))
-        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        if (gridMode) comics.chunked(2).forEach { pair ->
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            pair.forEach { row.addView(comicCard(it, generation)) }
-            grid.addView(row)
-        } else comics.forEach { file ->
-            grid.addView(button(comicTitle(file) + " • " + file.extension.uppercase()) { open(file) })
-        }
-        body.addView(grid)
         scroll.addView(body)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val allFiles = library.listFiles()?.filter {
+            it.isFile && it.extension.lowercase() in listOf("cbz", "cbr", "pdf")
+        } ?: emptyList()
+        val refresh = object {
+            fun render() {
+                body.removeAllViews()
+                val filtered = allFiles.filter { file ->
+                    (librarySection == "All" ||
+                     (librarySection == "Comics" && !file.extension.equals("pdf", true)) ||
+                     (librarySection == "Rulebooks" && file.extension.equals("pdf", true))) &&
+                     comicTitle(file).contains(libraryQuery, ignoreCase = true)
+                }
+                val sorted = when (sortMode) {
+                    "Title Z–A" -> filtered.sortedByDescending { it.name.lowercase() }
+                    "Recently added" -> filtered.sortedByDescending { it.lastModified() }
+                    "Recently read" -> filtered.sortedByDescending { progress.getLong("recent_" + it.name, 0L) }
+                    else -> filtered.sortedBy { it.name.lowercase() }
+                }
+                val ongoing = sorted.filter { progress.contains(it.name) }
+                    .sortedByDescending { progress.getLong("recent_" + it.name, 0L) }
+                if (ongoing.isNotEmpty() && libraryQuery.isBlank()) {
+                    body.addView(label("CONTINUE READING", 19f).apply { setPadding(0, dp(14), 0, dp(8)) })
+                    ongoing.take(5).forEach { file ->
+                        body.addView(button(comicTitle(file) + " • Page " + (progress.getInt(file.name, 0) + 1)) { open(file) })
+                    }
+                }
+                body.addView(label(librarySection.uppercase() + " • " + sorted.size, 19f).apply {
+                    setPadding(0, dp(16), 0, dp(8))
+                })
+                if (sorted.isEmpty()) body.addView(label("Nothing here yet. Import a file or change your search.", 15f, 0xffaebdd0.toInt()))
+                val shown = sorted.take(visibleCount)
+                if (gridMode) shown.chunked(2).forEach { pair ->
+                    val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+                    pair.forEach { row.addView(comicCard(it, generation)) }
+                    body.addView(row)
+                } else shown.forEach { file ->
+                    body.addView(button(comicTitle(file) + " • " + file.extension.uppercase()) { open(file) })
+                }
+                if (shown.size < sorted.size) body.addView(button("Show more (" + (sorted.size - shown.size) + " remaining)") {
+                    visibleCount += 60
+                    render()
+                })
+            }
+        }
+        search.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                libraryQuery = s?.toString() ?: ""
+                visibleCount = 60
+                refresh.render()
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+        refresh.render()
         setContentView(root)
     }
     @Deprecated("Legacy Activity result")
