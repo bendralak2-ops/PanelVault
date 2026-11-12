@@ -15,4 +15,4 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 }
-dependencies { implementation("com.github.junrar:junrar:7.5.5") }
+dependencies { implementation("me.zhanghai.android.libarchive:library:1.1.7") }
