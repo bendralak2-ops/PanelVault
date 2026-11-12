@@ -62,7 +62,13 @@ class MainActivity : Activity() {
     private lateinit var picture: ImageView
     private lateinit var count: TextView
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
-    private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(12,12,12,12); setBackgroundColor(0xff101a2a.toInt()) }
+    private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(12,12,12,12); setBackgroundColor(0xff101a2a.toInt())
+        setOnApplyWindowInsetsListener { view, insets ->
+            view.setPadding(dp(12) + insets.systemWindowInsetLeft, dp(12) + insets.systemWindowInsetTop,
+                dp(12) + insets.systemWindowInsetRight, dp(6) + insets.systemWindowInsetBottom)
+            insets
+        }
+    }
     private fun button(s: String, f: () -> Unit) = Button(this).apply { text = s; setOnClickListener { f() } }
     override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); coverSize = displayPrefs.getInt("coverSize", 160).coerceIn(100, 260); showLibrary() }
     private fun cleanup() {
@@ -307,31 +313,38 @@ class MainActivity : Activity() {
         }
     }
     private fun exportCatalog() {
-        val entries = JSONArray()
-        library.listFiles()?.filter { it.isFile && it.extension.lowercase() in listOf("cbz", "cbr", "pdf") }
-            ?.sortedBy { it.name.lowercase() }?.forEach { file ->
-                entries.put(JSONObject().apply {
-                    put("filename", file.name)
-                    put("title", comicTitle(file))
-                    put("series", if (file.extension.equals("pdf", true)) JSONObject.NULL else seriesName(file))
-                    put("format", file.extension.lowercase())
-                    put("bytes", file.length())
-                    put("modified", file.lastModified())
-                    put("page", if (progress.contains(file.name)) progress.getInt(file.name, 0) else JSONObject.NULL)
-                    put("lastRead", progress.getLong("recent_" + file.name, 0L))
-                })
-            }
-        val catalog = JSONObject().apply {
-            put("schemaVersion", 1)
-            put("app", "PanelVault")
-            put("exportedAt", System.currentTimeMillis())
-            put("items", entries)
-        }
-        val out = File(getExternalFilesDir(null) ?: filesDir, "panelvault-catalog.json")
-        out.writeText(catalog.toString(2))
-        android.app.AlertDialog.Builder(this).setTitle("PC sync preparation")
-            .setMessage("Catalog exported to app storage as panelvault-catalog.json. This is a metadata snapshot, not PC synchronization. Your comic files remain on the tablet.")
-            .setPositiveButton("OK", null).show()
+        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            type = "application/json"; addCategory(Intent.CATEGORY_OPENABLE)
+            putExtra(Intent.EXTRA_TITLE, "panelvault-catalog.json")
+        }, 21)
+    }
+    private fun writeCatalog(uri: android.net.Uri) {
+        toast("Preparing portable catalog�")
+        Thread {
+            try {
+                val entries = JSONArray()
+                library.listFiles()?.filter { it.isFile && it.extension.lowercase() in listOf("cbz", "cbr", "pdf") }
+                    ?.sortedBy { it.name.lowercase() }?.forEach { file ->
+                        entries.put(JSONObject().apply {
+                            put("id", "sha256:" + CatalogIdentity.sha256(file))
+                            put("filename", file.name); put("title", comicTitle(file))
+                            put("series", if (file.extension.equals("pdf", true)) JSONObject.NULL else seriesName(file))
+                            put("format", file.extension.lowercase()); put("bytes", file.length())
+                            put("modified", file.lastModified())
+                            put("page", if (progress.contains(file.name)) progress.getInt(file.name, 0) else JSONObject.NULL)
+                            put("lastRead", progress.getLong("recent_" + file.name, 0L))
+                        })
+                    }
+                val catalog = JSONObject().apply {
+                    put("schemaVersion", 2); put("app", "PanelVault")
+                    put("pageIndexBase", 0); put("identityAlgorithm", "sha256")
+                    put("exportedAt", System.currentTimeMillis()); put("items", entries)
+                }
+                contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(catalog.toString(2)) }
+                    ?: error("Cannot write catalog")
+                runOnUiThread { toast("Catalog saved. Windows synchronization is not connected yet.") }
+            } catch (e: Exception) { runOnUiThread { toast("Export failed: ${diagnostic(e)}") } }
+        }.start()
     }
     private fun libraryMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
@@ -360,6 +373,7 @@ class MainActivity : Activity() {
         val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         heading.addView(vaultLogo(), LinearLayout.LayoutParams(0, dp(84), 1f))
         val menuButton = navButton("☰", false) {}
+        menuButton.contentDescription = "Open navigation"
         menuButton.setOnClickListener { openDrawer() }
         heading.addView(menuButton)
         root.addView(heading)
@@ -386,7 +400,7 @@ class MainActivity : Activity() {
         val sizeRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(6)) }
         val sizeLabel = label("COVER SIZE", 10f, 0xff9fc5e7.toInt())
         sizeRow.addView(sizeLabel)
-        val sizeSlider = SeekBar(this).apply { max = 160; progress = coverSize - 100; contentDescription = "Comic cover size" }
+        val sizeSlider = SeekBar(this).apply { max = 160; progress = coverSize - 100; progressTintList = android.content.res.ColorStateList.valueOf(0xff70c4ff.toInt()); thumbTintList = android.content.res.ColorStateList.valueOf(0xffb5e9ff.toInt()); contentDescription = "Comic cover size" }
         sizeRow.addView(sizeSlider, LinearLayout.LayoutParams(0, dp(40), 1f))
         val sortButton = navButton("↕", false) {}
         sortButton.contentDescription = "Sort and display options"
@@ -471,7 +485,7 @@ class MainActivity : Activity() {
         }
         sizeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
-                if (fromUser) { coverSize = value + 100; refresh.render() }
+                if (fromUser) { coverSize = value + 100; displayPrefs.edit().putInt("coverSize", coverSize).apply(); refresh.render() }
             }
             override fun onStartTrackingTouch(bar: SeekBar?) {}
             override fun onStopTrackingTouch(bar: SeekBar?) { displayPrefs.edit().putInt("coverSize", coverSize).apply() }
@@ -491,7 +505,9 @@ class MainActivity : Activity() {
     @Deprecated("Legacy Activity result")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
-        if (requestCode != 12 || resultCode != RESULT_OK || data == null) return
+        if (resultCode != RESULT_OK || data == null) return
+        if (requestCode == 21) { data.data?.let { writeCatalog(it) }; return }
+        if (requestCode != 12) return
         val uris = mutableListOf<android.net.Uri>()
         data.data?.let { uris.add(it) }
         data.clipData?.let { c -> for (i in 0 until c.itemCount) uris.add(c.getItemAt(i).uri) }

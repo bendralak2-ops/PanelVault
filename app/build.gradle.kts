@@ -2,10 +2,12 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "com.panelvault.reader"
     compileSdk = 35
+    buildToolsVersion = "35.0.0"
     defaultConfig {
         applicationId = "com.panelvault.reader"
         minSdk = 26
         targetSdk = 35
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         versionCode = providers.environmentVariable("PANELVAULT_VERSION_CODE").orElse("100").get().toInt()
         versionName = "0.4.0"
     }
@@ -31,7 +33,7 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 }
-dependencies { implementation("me.zhanghai.android.libarchive:library:1.1.6") }
+dependencies { testImplementation("junit:junit:4.13.2"); implementation("me.zhanghai.android.libarchive:library:1.1.6") }
 
 // Never distribute a release silently signed with an ephemeral debug key.
 tasks.matching { it.name == "validateSigningRelease" }.configureEach {
@@ -40,3 +42,4 @@ tasks.matching { it.name == "validateSigningRelease" }.configureEach {
         check(!System.getenv("PANELVAULT_KEY_PASSWORD").isNullOrBlank()) { "PANELVAULT_KEY_PASSWORD is required" }
     }
 }
+
