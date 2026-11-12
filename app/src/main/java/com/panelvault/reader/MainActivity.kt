@@ -39,6 +39,7 @@ class MainActivity : Activity() {
     private var librarySection = "Comics"
     private var libraryQuery = ""
     private var visibleCount = 60
+    private var selectedSeries: String? = null
     private var readerControlsVisible = true
     private var readerTop: View? = null
     private var readerBottom: View? = null
@@ -147,11 +148,31 @@ class MainActivity : Activity() {
         }
     }
     private fun comicTitle(file: File) = file.nameWithoutExtension.replace('_', ' ').trim()
+    private fun seriesName(file: File): String {
+        val title = comicTitle(file)
+        return title.replace(Regex("""(?i)\\s*(?:#|issue\\s*|no\\.?\\s*)\\d+.*$"""), "")
+            .replace(Regex("""\\s+\\(\\d{4}\\).*$"""), "")
+            .replace(Regex("""\\s+\\d{3,4}$"""), "")
+            .trim(' ', '-', '_').ifBlank { title }
+    }
+    private fun panelBackground(selected: Boolean = false) = GradientDrawable().apply {
+        setColor(if (selected) 0xff205b94.toInt() else 0xff1b2d47.toInt())
+        cornerRadius = dp(12).toFloat()
+        setStroke(dp(1), if (selected) 0xff4ca9ed.toInt() else 0xff315b85.toInt())
+    }
+    private fun navButton(title: String, selected: Boolean, action: () -> Unit) = button(title, action).apply {
+        isAllCaps = false
+        textSize = 13f
+        setTextColor(Color.WHITE)
+        background = panelBackground(selected)
+    }
     private fun comicCard(file: File, generation: Int): LinearLayout {
         val width = (resources.displayMetrics.widthPixels - dp(40)) / 2
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(5), dp(6), dp(5), dp(12))
+            setPadding(dp(9), dp(9), dp(9), dp(12))
+            background = panelBackground()
+            elevation = dp(3).toFloat()
             layoutParams = LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
             setOnClickListener { open(file) }
             val cover = ImageView(this@MainActivity).apply {
@@ -167,7 +188,7 @@ class MainActivity : Activity() {
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
             }
-            addView(name, LinearLayout.LayoutParams(-1, dp(43)))
+            addView(name, LinearLayout.LayoutParams(-1, dp(50)))
             val saved = progress.getInt(file.name, 0)
             val hasProgress = progress.contains(file.name)
             addView(label(if (hasProgress) "Continue • Page ${saved + 1}" else file.extension.uppercase(), 12f, 0xff93b9e9.toInt()))
@@ -196,12 +217,12 @@ class MainActivity : Activity() {
         root.setPadding(dp(12), dp(12), dp(12), dp(6))
         val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         heading.addView(label("PANELVAULT", 29f).apply { typeface = Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
-        val menuButton = button("☰ Menu") {}
+        val menuButton = navButton("☰ Menu", false) {}
         menuButton.setOnClickListener { libraryMenu(menuButton) }
         heading.addView(menuButton)
         root.addView(heading)
         root.addView(label("YOUR COMIC COLLECTION", 11f, 0xff8db5e5.toInt()))
-        root.addView(button("+ Import CBZ / CBR / PDF") {
+        root.addView(navButton("＋  IMPORT COMICS & BOOKS", true) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE)
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
@@ -221,9 +242,8 @@ class MainActivity : Activity() {
         }
         root.addView(search, LinearLayout.LayoutParams(-1, dp(46)))
         val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        listOf("Comics", "Rulebooks", "All").forEach { section ->
-            val tab = button(section) { librarySection = section; visibleCount = 60; showLibrary() }
-            tab.alpha = if (librarySection == section) 1f else 0.6f
+        listOf("Comics", "Series", "Rulebooks", "All").forEach { section ->
+            val tab = navButton(section, librarySection == section) { librarySection = section; selectedSeries = null; visibleCount = 60; showLibrary() }
             tabs.addView(tab, LinearLayout.LayoutParams(0, -2, 1f))
         }
         root.addView(tabs)
