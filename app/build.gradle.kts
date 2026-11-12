@@ -1,7 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "com.panelvault.reader"
-    compileSdk = 37
+    compileSdk = 35
     defaultConfig {
         applicationId = "com.panelvault.reader"
         minSdk = 26
@@ -15,4 +15,4 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 }
-dependencies { implementation("me.zhanghai.android.libarchive:library:1.1.7") }
+dependencies { implementation("me.zhanghai.android.libarchive:library:1.1.6") }
