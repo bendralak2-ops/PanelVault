@@ -6,8 +6,24 @@ android {
         applicationId = "com.panelvault.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.3-alpha"
+        versionCode = providers.environmentVariable("PANELVAULT_VERSION_CODE").orElse("100").get().toInt()
+        versionName = "0.4.0"
+    }
+    signingConfigs {
+        create("persistentRelease") {
+            val keyPath = System.getenv("PANELVAULT_KEYSTORE")
+            if (keyPath != null) {
+                storeFile = file(keyPath)
+                storePassword = System.getenv("PANELVAULT_KEY_PASSWORD")
+                keyAlias = "panelvault"
+                keyPassword = System.getenv("PANELVAULT_KEY_PASSWORD")
+                storeType = "PKCS12"
+            }
+        }
+    }
+    buildTypes {
+        getByName("debug") { applicationIdSuffix = ".dev"; versionNameSuffix = "-dev" }
+        getByName("release") { signingConfig = signingConfigs.getByName("persistentRelease") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -16,3 +32,11 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies { implementation("me.zhanghai.android.libarchive:library:1.1.6") }
+
+// Never distribute a release silently signed with an ephemeral debug key.
+tasks.matching { it.name == "validateSigningRelease" }.configureEach {
+    doFirst {
+        check(!System.getenv("PANELVAULT_KEYSTORE").isNullOrBlank()) { "PANELVAULT_KEYSTORE must point to the permanent release key" }
+        check(!System.getenv("PANELVAULT_KEY_PASSWORD").isNullOrBlank()) { "PANELVAULT_KEY_PASSWORD is required" }
+    }
+}

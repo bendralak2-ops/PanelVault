@@ -48,6 +48,11 @@ class MainActivity : Activity() {
     private var visibleCount = 60
     private var selectedSeries: String? = null
     private var drawerOpen = false
+    private var drawerOverlay: FrameLayout? = null
+    private val displayPrefs by lazy { getSharedPreferences("display", MODE_PRIVATE) }
+    private var coverSize = 160
+    private var cardWidth = 160
+    private var continueOnly = false
     private var readerControlsVisible = true
     private var readerTop: View? = null
     private var readerBottom: View? = null
@@ -59,7 +64,7 @@ class MainActivity : Activity() {
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(12,12,12,12); setBackgroundColor(0xff101a2a.toInt()) }
     private fun button(s: String, f: () -> Unit) = Button(this).apply { text = s; setOnClickListener { f() } }
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); showLibrary() }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); coverSize = displayPrefs.getInt("coverSize", 160).coerceIn(100, 260); showLibrary() }
     private fun cleanup() {
         pdf?.close(); pdf = null; descriptor?.close(); descriptor = null
         bitmap?.recycle(); bitmap = null
@@ -179,7 +184,7 @@ class MainActivity : Activity() {
             private val p = Paint(Paint.ANTI_ALIAS_FLAG)
             override fun onDraw(c: Canvas) {
                 super.onDraw(c)
-                val unit = height / 110f
+                val unit = minOf(height / 110f, width / 240f)
                 c.save()
                 c.scale(unit, unit)
                 p.shader = LinearGradient(0f, 0f, 0f, 95f,
@@ -190,9 +195,19 @@ class MainActivity : Activity() {
                 p.textSize = 46f
                 p.textScaleX = 0.86f
                 p.setShadowLayer(3f, 3f, 4f, Color.BLACK)
+                val face = p.shader
+                p.shader = null; p.color = 0xff06101f.toInt()
+                p.style = Paint.Style.STROKE; p.strokeWidth = 5f
+                for (offset in 6 downTo 1) c.drawText("PANEL", 7f + offset, 48f + offset, p)
+                p.color = 0xffbceeff.toInt(); p.strokeWidth = 2f
+                c.drawText("PANEL", 7f, 48f, p)
+                p.style = Paint.Style.FILL; p.shader = face
                 c.drawText("PANEL", 7f, 48f, p)
                 p.textSize = 43f
-                c.drawText("VAULT", 22f, 91f, p)
+                p.shader = null; p.color = 0xff06101f.toInt(); p.style = Paint.Style.STROKE; p.strokeWidth = 5f
+                for (offset in 6 downTo 1) c.drawText("VAULT", 22f + offset, 91f + offset, p)
+                p.color = 0xffbceeff.toInt(); p.strokeWidth = 2f; c.drawText("VAULT", 22f, 91f, p)
+                p.style = Paint.Style.FILL; p.shader = face; c.drawText("VAULT", 22f, 91f, p)
                 p.clearShadowLayer()
                 p.shader = null
                 p.style = Paint.Style.STROKE
@@ -207,52 +222,63 @@ class MainActivity : Activity() {
         typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD_ITALIC)
         letterSpacing = 0.055f
     }
+    private fun importFiles() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }, 12)
+    }
+    private fun closeDrawer() {
+        val overlay = drawerOverlay ?: return
+        val panel = overlay.getChildAt(1)
+        panel.animate().translationX(-panel.width.toFloat()).setDuration(220).withEndAction {
+            (overlay.parent as? ViewGroup)?.removeView(overlay)
+        }.start()
+        drawerOverlay = null; drawerOpen = false
+    }
     private fun openDrawer() {
-        val options = arrayOf("COMICS", "SERIES", "RULEBOOKS", "ALL FILES",
-            "CONTINUE READING", "IMPORT FILES", "SORT & DISPLAY", "EXPORT CATALOG", "ABOUT")
-        val dialog = android.app.AlertDialog.Builder(this)
-            .setTitle("PANELVAULT  /  NAVIGATION")
-            .setItems(options) { _, index ->
-                when (index) {
-                    in 0..3 -> {
-                        librarySection = arrayOf("Comics", "Series", "Rulebooks", "All")[index]
-                        selectedSeries = null
-                        showLibrary()
-                    }
-                    4 -> { sortMode = "Recently read"; librarySection = "All"; showLibrary() }
-                    5 -> startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                        type = "*/*"
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                    }, 12)
-                    6 -> {
-                        val choices = arrayOf("Title A–Z", "Title Z–A", "Recently added",
-                            "Recently read", "Cover grid", "List")
-                        android.app.AlertDialog.Builder(this).setTitle("SORT & DISPLAY")
-                            .setItems(choices) { _, choice ->
-                                if (choice >= 4) gridMode = choice == 4 else sortMode = choices[choice]
-                                showLibrary()
-                            }.show()
-                    }
-                    7 -> exportCatalog()
-                    8 -> android.app.AlertDialog.Builder(this).setTitle("PANELVAULT")
-                        .setMessage("Comic-first offline library. CBZ, CBR and PDF support.")
-                        .setPositiveButton("OK", null).show()
-                }
-            }.create()
-        dialog.window?.setGravity(Gravity.LEFT or Gravity.TOP)
-        dialog.show()
-        dialog.window?.setGravity(Gravity.LEFT or Gravity.TOP)
-        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.75f).toInt(), -1)
+        if (drawerOpen) return
+        val host = findViewById<ViewGroup>(android.R.id.content)
+        val overlay = FrameLayout(this)
+        val shade = View(this).apply { setBackgroundColor(0xbb000916.toInt()); setOnClickListener { closeDrawer() } }
+        overlay.addView(shade, FrameLayout.LayoutParams(-1, -1))
+        val panel = column().apply {
+            setPadding(dp(20), dp(28), dp(20), dp(20))
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xff172d4c.toInt(), 0xff080f20.toInt()))
+            elevation = dp(20).toFloat()
+            isClickable = true
+        }
+        panel.addView(vaultLogo(), LinearLayout.LayoutParams(-1, dp(100)))
+        panel.addView(label("YOUR COLLECTION. YOUR UNIVERSE.", 10f, 0xff8fbbdf.toInt()).apply { setPadding(0, dp(12), 0, dp(28)) })
+        fun entry(title: String, selected: Boolean = false, action: () -> Unit) {
+            panel.addView(navButton(title, selected) { closeDrawer(); action() }, LinearLayout.LayoutParams(-1, dp(52)).apply { bottomMargin = dp(8) })
+        }
+        listOf("Comics", "Series", "Rulebooks", "All").forEach { section ->
+            entry(section, librarySection == section && !continueOnly) {
+                librarySection = section; selectedSeries = null; continueOnly = false; visibleCount = 60; showLibrary()
+            }
+        }
+        entry("Continue reading", continueOnly) { continueOnly = true; librarySection = "All"; selectedSeries = null; showLibrary() }
+        panel.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
+        entry("＋  Import files") { importFiles() }
+        entry("Sort & display") { libraryMenu(findViewById(android.R.id.content)) }
+        entry("Export catalog") { exportCatalog() }
+        entry("Close navigation") {}
+        val width = minOf(dp(320), (resources.displayMetrics.widthPixels * .86f).toInt())
+        overlay.addView(panel, FrameLayout.LayoutParams(width, -1, Gravity.LEFT))
+        host.addView(overlay, ViewGroup.LayoutParams(-1, -1))
+        drawerOverlay = overlay; drawerOpen = true
+        panel.translationX = -width.toFloat()
+        panel.animate().translationX(0f).setDuration(240).start()
     }
     private fun comicCard(file: File, generation: Int): LinearLayout {
-        val width = (resources.displayMetrics.widthPixels - dp(40)) / 2
+        val width = cardWidth
         val coverWidth = width
         val coverHeight = (coverWidth * 1.52f).toInt()
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, dp(8))
-            background = panelBackground()
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xff152840.toInt(), 0xff0a1424.toInt())).apply { cornerRadius = dp(10).toFloat(); setStroke(dp(1), 0xff29425f.toInt()) }
             elevation = dp(3).toFloat()
             layoutParams = LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
             setOnClickListener { open(file) }
@@ -263,6 +289,9 @@ class MainActivity : Activity() {
                 contentDescription = "Cover for ${comicTitle(file)}"
             }
             addView(cover, LinearLayout.LayoutParams(coverWidth, coverHeight))
+            addView(View(this@MainActivity).apply {
+                background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xff386ba0.toInt(), 0xff84cbf3.toInt(), 0xff213b58.toInt()))
+            }, LinearLayout.LayoutParams(-1, dp(3)))
             loadCover(file, cover, generation)
             val name = label(comicTitle(file), 14f).apply {
                 typeface = Typeface.DEFAULT_BOLD
@@ -323,22 +352,18 @@ class MainActivity : Activity() {
     private fun showLibrary() {
         libraryGeneration++
         val generation = libraryGeneration
+        drawerOpen = false; drawerOverlay = null
         cleanup(); current = null
         val root = column()
+        root.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xff1a3354.toInt(), 0xff0b172b.toInt(), 0xff060d1b.toInt()))
         root.setPadding(dp(12), dp(12), dp(12), dp(6))
         val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         heading.addView(vaultLogo(), LinearLayout.LayoutParams(0, dp(84), 1f))
-        val menuButton = navButton("☰ Menu", false) {}
+        val menuButton = navButton("☰", false) {}
         menuButton.setOnClickListener { openDrawer() }
         heading.addView(menuButton)
         root.addView(heading)
         root.addView(label("YOUR COMIC COLLECTION", 11f, 0xff8db5e5.toInt()))
-        root.addView(navButton("＋  IMPORT COMICS & BOOKS", true) {
-            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE)
-                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-            }, 12)
-        })
         val search = EditText(this).apply {
             hint = "Search comics and books"
             setSingleLine(true)
@@ -354,10 +379,20 @@ class MainActivity : Activity() {
         root.addView(search, LinearLayout.LayoutParams(-1, dp(46)))
         val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         listOf("Comics", "Series", "Rulebooks", "All").forEach { section ->
-            val tab = navButton(section, librarySection == section) { librarySection = section; selectedSeries = null; visibleCount = 60; showLibrary() }
+            val tab = navButton(section, librarySection == section) { librarySection = section; continueOnly = false; selectedSeries = null; visibleCount = 60; showLibrary() }
             tabs.addView(tab, LinearLayout.LayoutParams(0, -2, 1f))
         }
         root.addView(tabs)
+        val sizeRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(6)) }
+        val sizeLabel = label("COVER SIZE", 10f, 0xff9fc5e7.toInt())
+        sizeRow.addView(sizeLabel)
+        val sizeSlider = SeekBar(this).apply { max = 160; progress = coverSize - 100; contentDescription = "Comic cover size" }
+        sizeRow.addView(sizeSlider, LinearLayout.LayoutParams(0, dp(40), 1f))
+        val sortButton = navButton("↕", false) {}
+        sortButton.contentDescription = "Sort and display options"
+        sortButton.setOnClickListener { libraryMenu(sortButton) }
+        sizeRow.addView(sortButton, LinearLayout.LayoutParams(dp(48), dp(42)))
+        root.addView(sizeRow)
         val scroll = ScrollView(this)
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroll.addView(body)
@@ -374,6 +409,7 @@ class MainActivity : Activity() {
                      (librarySection == "Series" && !file.extension.equals("pdf", true)) ||
                      (librarySection == "Rulebooks" && file.extension.equals("pdf", true))) &&
                      comicTitle(file).contains(libraryQuery, ignoreCase = true) &&
+                     (!continueOnly || progress.contains(file.name)) &&
                      (librarySection != "Series" || selectedSeries == null || seriesName(file) == selectedSeries)
                 }
                 if (librarySection == "Series" && selectedSeries == null) {
@@ -401,18 +437,28 @@ class MainActivity : Activity() {
                     .sortedByDescending { progress.getLong("recent_" + it.name, 0L) }
                 if (ongoing.isNotEmpty() && libraryQuery.isBlank()) {
                     body.addView(comicHeading("CONTINUE READING").apply { setPadding(0, dp(14), 0, dp(8)) })
-                    ongoing.take(5).forEach { file ->
-                        body.addView(button(comicTitle(file) + " • Page " + (progress.getInt(file.name, 0) + 1)) { open(file) })
+                    val shelf = HorizontalScrollView(this@MainActivity).apply { isHorizontalScrollBarEnabled = false }
+                    val rail = LinearLayout(this@MainActivity)
+                    val oldWidth = cardWidth
+                    cardWidth = dp(124)
+                    ongoing.take(8).forEach { file ->
+                        rail.addView(comicCard(file, generation), LinearLayout.LayoutParams(cardWidth, -2).apply { rightMargin = dp(12) })
                     }
+                    cardWidth = oldWidth
+                    shelf.addView(rail); body.addView(shelf)
                 }
                 body.addView(comicHeading(librarySection.uppercase() + " • " + sorted.size).apply {
                     setPadding(0, dp(16), 0, dp(8))
                 })
                 if (sorted.isEmpty()) body.addView(label("Nothing here yet. Import a file or change your search.", 15f, 0xffaebdd0.toInt()))
                 val shown = sorted.take(visibleCount)
-                if (gridMode) shown.chunked(2).forEach { pair ->
+                val available = resources.displayMetrics.widthPixels - dp(24)
+                val columns = maxOf(1, (available + dp(12)) / (dp(coverSize) + dp(12)))
+                cardWidth = (available - dp(12) * (columns - 1)) / columns
+                if (gridMode) shown.chunked(columns).forEach { pair ->
                     val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-                    pair.forEach { row.addView(comicCard(it, generation)) }
+                    pair.forEachIndexed { index, file -> row.addView(comicCard(file, generation), LinearLayout.LayoutParams(cardWidth, -2).apply { if (index < pair.lastIndex) rightMargin = dp(12) }) }
+                    row.setPadding(0, 0, 0, dp(18))
                     body.addView(row)
                 } else shown.forEach { file ->
                     body.addView(button(comicTitle(file) + " • " + file.extension.uppercase()) { open(file) })
@@ -423,6 +469,13 @@ class MainActivity : Activity() {
                 })
             }
         }
+        sizeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                if (fromUser) { coverSize = value + 100; refresh.render() }
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) { displayPrefs.edit().putInt("coverSize", coverSize).apply() }
+        })
         search.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -645,6 +698,6 @@ class MainActivity : Activity() {
         count.text="${page+1} / ${pageCount()}"
         current?.let { progress.edit().putInt(it.name,page).putLong("recent_" + it.name, System.currentTimeMillis()).apply() }
     }
-    override fun onBackPressed() { if(current!=null) showLibrary() else super.onBackPressed() }
+    override fun onBackPressed() { if(drawerOpen) closeDrawer() else if(current!=null) showLibrary() else super.onBackPressed() }
     override fun onDestroy() { cleanup();super.onDestroy() }
 }

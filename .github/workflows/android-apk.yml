@@ -3,31 +3,56 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+  pull_request:
+permissions:
+  contents: read
 jobs:
-  apk:
+  verify:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - name: Configure preinstalled Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          ls -la "$ANDROID_HOME/cmdline-tools" || true
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
-      - name: Compile debug APK
-        run: gradle --no-daemon :app:assembleDebug
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Verify development build
+        run: gradle --no-daemon :app:assembleDebug :app:lintDebug
+  release:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      PANELVAULT_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
-          name: PanelVault-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Restore permanent signing identity
+        env:
+          KEY_BASE64: ${{ secrets.PANELVAULT_KEYSTORE_BASE64 }}
+          KEY_PASSWORD: ${{ secrets.PANELVAULT_KEY_PASSWORD }}
+        run: |
+          test -n "$KEY_BASE64" && test -n "$KEY_PASSWORD" || { echo "Configure permanent PanelVault signing secrets before release"; exit 1; }
+          echo "$KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/panelvault.p12"
+      - name: Build signed release
+        env:
+          PANELVAULT_KEYSTORE: ${{ runner.temp }}/panelvault.p12
+          PANELVAULT_KEY_PASSWORD: ${{ secrets.PANELVAULT_KEY_PASSWORD }}
+        run: gradle --no-daemon :app:assembleRelease :app:lintRelease
+      - name: Verify signing certificate
+        run: '$ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PanelVault-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+      - name: Remove temporary key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/panelvault.p12"
