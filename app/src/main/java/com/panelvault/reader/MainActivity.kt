@@ -260,8 +260,25 @@ class MainActivity : Activity() {
                 val filtered = allFiles.filter { file ->
                     (librarySection == "All" ||
                      (librarySection == "Comics" && !file.extension.equals("pdf", true)) ||
+                     (librarySection == "Series" && !file.extension.equals("pdf", true)) ||
                      (librarySection == "Rulebooks" && file.extension.equals("pdf", true))) &&
-                     comicTitle(file).contains(libraryQuery, ignoreCase = true)
+                     comicTitle(file).contains(libraryQuery, ignoreCase = true) &&
+                     (librarySection != "Series" || selectedSeries == null || seriesName(file) == selectedSeries)
+                }
+                if (librarySection == "Series" && selectedSeries == null) {
+                    val groups = filtered.groupBy { seriesName(it) }.toSortedMap(String.CASE_INSENSITIVE_ORDER)
+                    body.addView(label("SERIES  •  " + groups.size, 19f).apply { setPadding(0, dp(16), 0, dp(8)) })
+                    groups.forEach { (name, issues) ->
+                        body.addView(navButton(name + "   •   " + issues.size + " issues", false) {
+                            selectedSeries = name
+                            visibleCount = 60
+                            render()
+                        }, LinearLayout.LayoutParams(-1, dp(54)).apply { bottomMargin = dp(5) })
+                    }
+                    return
+                }
+                if (librarySection == "Series" && selectedSeries != null) {
+                    body.addView(navButton("‹ ALL SERIES", false) { selectedSeries = null; render() })
                 }
                 val sorted = when (sortMode) {
                     "Title Z–A" -> filtered.sortedByDescending { it.name.lowercase() }
