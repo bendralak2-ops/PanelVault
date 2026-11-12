@@ -44,16 +44,15 @@ jobs:
           disable-animations: true
           script: |
             gradle --no-daemon :app:connectedDebugAndroidTest
-            adb shell am start -n com.panelvault.reader.dev/com.panelvault.reader.MainActivity
-            sleep 2
-            adb shell screencap -p /sdcard/library.png
-            adb pull /sdcard/library.png library.png
+            adb pull /sdcard/Download/panelvault-library.png library.png
+            adb pull /sdcard/Download/panelvault-drawer.png drawer.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: PanelVault-device-verification
           path: |
             library.png
+            drawer.png
             app/build/reports/androidTests/
   release:
     if: github.event_name != 'pull_request'

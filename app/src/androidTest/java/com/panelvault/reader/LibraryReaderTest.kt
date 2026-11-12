@@ -86,6 +86,15 @@ class LibraryReaderTest : ActivityInstrumentationTestCase2<MainActivity>(MainAct
             instrumentation.runOnMainSync { active.onBackPressed() }
         }
         waitFor { visibleViews().any { it.contentDescription == "Open navigation" } }
+        Thread.sleep(1000)
+        fun screenshot(name: String) {
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                instrumentation.uiAutomation.executeShellCommand("screencap -p /sdcard/Download/$name.png")
+            ).use { it.readBytes() }
+        }
+        screenshot("panelvault-library")
+        instrumentation.runOnMainSync { visibleViews().first { it.contentDescription == "Open navigation" }.performClick() }
+        waitFor { visibleViews().filterIsInstance<TextView>().any { it.text.toString() == "Close navigation" } }
+        screenshot("panelvault-drawer")
     }
 }
-
