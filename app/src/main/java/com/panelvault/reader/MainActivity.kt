@@ -57,7 +57,7 @@ class MainActivity : Activity() {
     private var readerTop: View? = null
     private var readerBottom: View? = null
     private val coverWorker = Executors.newSingleThreadExecutor()
-    private var libraryGeneration = 0
+    @Volatile private var libraryGeneration = 0
     private val coverDir by lazy { File(cacheDir, "covers").apply { mkdirs() } }
     private lateinit var picture: ImageView
     private lateinit var count: TextView
@@ -155,9 +155,12 @@ class MainActivity : Activity() {
         }
         coverWorker.execute {
             try {
-                val bmp = extractCover(file) ?: return@execute
-                cached.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 78, it) }
-                bmp.recycle()
+                if (generation != libraryGeneration) return@execute
+                if (!cached.exists()) {
+                    val bmp = extractCover(file) ?: return@execute
+                    cached.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 78, it) }
+                    bmp.recycle()
+                }
                 runOnUiThread {
                     if (generation == libraryGeneration) {
                         BitmapFactory.decodeFile(cached.path)?.let { target.setImageBitmap(it) }
@@ -364,7 +367,7 @@ class MainActivity : Activity() {
     }
     private fun showLibrary() {
         libraryGeneration++
-        val generation = libraryGeneration
+        var generation = libraryGeneration
         drawerOpen = false; drawerOverlay = null
         cleanup(); current = null
         val root = column()
@@ -416,6 +419,8 @@ class MainActivity : Activity() {
         } ?: emptyList()
         val refresh = object {
             fun render() {
+                libraryGeneration++
+                generation = libraryGeneration
                 body.removeAllViews()
                 val filtered = allFiles.filter { file ->
                     (librarySection == "All" ||
@@ -485,7 +490,14 @@ class MainActivity : Activity() {
         }
         sizeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
-                if (fromUser) { coverSize = value + 100; displayPrefs.edit().putInt("coverSize", coverSize).apply(); refresh.render() }
+                if (fromUser) {
+                    val available = resources.displayMetrics.widthPixels - dp(24)
+                    fun columns(size: Int) = maxOf(1, (available + dp(12)) / (dp(size) + dp(12)))
+                    val previousColumns = columns(coverSize)
+                    coverSize = value + 100
+                    displayPrefs.edit().putInt("coverSize", coverSize).apply()
+                    if (columns(coverSize) != previousColumns) refresh.render()
+                }
             }
             override fun onStartTrackingTouch(bar: SeekBar?) {}
             override fun onStopTrackingTouch(bar: SeekBar?) { displayPrefs.edit().putInt("coverSize", coverSize).apply() }

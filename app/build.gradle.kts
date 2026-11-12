@@ -48,4 +48,3 @@ tasks.matching { it.name == "validateSigningRelease" }.configureEach {
         check(!System.getenv("PANELVAULT_KEY_PASSWORD").isNullOrBlank()) { "PANELVAULT_KEY_PASSWORD is required" }
     }
 }
-
