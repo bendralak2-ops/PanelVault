@@ -19,10 +19,10 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls -la "$ANDROID_HOME/cmdline-tools" || true
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.10.2"
+          gradle-version: "8.13"
       - name: Compile debug APK
         run: gradle --no-daemon :app:assembleDebug
       - name: Upload APK
