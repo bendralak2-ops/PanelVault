@@ -95,6 +95,8 @@ class LibraryReaderTest : ActivityInstrumentationTestCase2<MainActivity>(MainAct
         screenshot("panelvault-library")
         instrumentation.runOnMainSync { visibleViews().first { it.contentDescription == "Open navigation" }.performClick() }
         waitFor { visibleViews().filterIsInstance<TextView>().any { it.text.toString() == "Close navigation" } }
+        Thread.sleep(500) // Allow the drawer animation and compositor frame to finish.
         screenshot("panelvault-drawer")
     }
 }
+
