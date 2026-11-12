@@ -324,17 +324,89 @@ class MainActivity : Activity() {
     }
     private fun cleanupExceptCache() { pdf?.close();pdf=null;descriptor?.close();descriptor=null;bitmap?.recycle();bitmap=null }
     private fun pageCount() = pdf?.pageCount ?: pages.size
+    private fun toggleReaderControls() {
+        readerControlsVisible = !readerControlsVisible
+        readerTop?.visibility = if (readerControlsVisible) View.VISIBLE else View.GONE
+        readerBottom?.visibility = if (readerControlsVisible) View.VISIBLE else View.GONE
+    }
     private fun showReader() {
         val view=column()
+        readerControlsVisible = true
         val top=LinearLayout(this)
         top.addView(button("Library") { showLibrary() })
         count=TextView(this).apply { setTextColor(-1); gravity=Gravity.CENTER; textSize=18f }
-        top.addView(count,LinearLayout.LayoutParams(0,-2,1f));view.addView(top)
+        top.addView(count,LinearLayout.LayoutParams(0,-2,1f))
+        top.addView(button("⋮") {
+            val options = arrayOf("Go to page", "Hide controls")
+            android.app.AlertDialog.Builder(this).setTitle("Reader menu").setItems(options) { _, which ->
+                if (which == 1) toggleReaderControls()
+                else {
+                    val input = EditText(this).apply { inputType = 2; hint = "Page number" }
+                    android.app.AlertDialog.Builder(this).setTitle("Go to page").setView(input)
+                        .setPositiveButton("Go") { _, _ ->
+                            input.text.toString().toIntOrNull()?.let { page = (it - 1).coerceIn(0, (pageCount()-1).coerceAtLeast(0)); draw() }
+                        }.setNegativeButton("Cancel", null).show()
+                }
+            }.show()
+        })
+        readerTop = top
+        view.addView(top)
         picture=ImageView(this).apply { adjustViewBounds=true;scaleType=ImageView.ScaleType.FIT_CENTER }
-        view.addView(ScrollView(this).apply { addView(picture) },LinearLayout.LayoutParams(-1,0,1f))
+        var zoom = 1f
+        var panX = 0f
+        var panY = 0f
+        val scaler = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                zoom = (zoom * detector.scaleFactor).coerceIn(1f, 4f)
+                if (zoom == 1f) { panX = 0f; panY = 0f }
+                picture.scaleX = zoom; picture.scaleY = zoom
+                picture.translationX = panX; picture.translationY = panY
+                return true
+            }
+        })
+        val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                when {
+                    e.x < picture.width * 0.25f -> change(-1)
+                    e.x > picture.width * 0.75f -> change(1)
+                    else -> toggleReaderControls()
+                }
+                return true
+            }
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                zoom = if (zoom > 1f) 1f else 2f
+                panX = 0f; panY = 0f
+                picture.scaleX = zoom; picture.scaleY = zoom
+                picture.translationX = 0f; picture.translationY = 0f
+                return true
+            }
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+                if (zoom <= 1f) return false
+                panX = (panX - dx).coerceIn(-picture.width * (zoom-1f)/2f, picture.width * (zoom-1f)/2f)
+                panY = (panY - dy).coerceIn(-picture.height * (zoom-1f)/2f, picture.height * (zoom-1f)/2f)
+                picture.translationX = panX; picture.translationY = panY
+                return true
+            }
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                if (zoom > 1f) return false
+                if (kotlin.math.abs(vx) > 500f && kotlin.math.abs(vx) > kotlin.math.abs(vy)) {
+                    change(if (vx < 0f) 1 else -1)
+                    return true
+                }
+                return false
+            }
+        })
+        picture.setOnTouchListener { _, event ->
+            scaler.onTouchEvent(event)
+            if (!scaler.isInProgress) gestures.onTouchEvent(event)
+            true
+        }
+        view.addView(picture, LinearLayout.LayoutParams(-1,0,1f))
         val controls=LinearLayout(this)
         controls.addView(button("Previous") { change(-1) },LinearLayout.LayoutParams(0,-2,1f))
         controls.addView(button("Next") { change(1) },LinearLayout.LayoutParams(0,-2,1f))
+        readerBottom = controls
         view.addView(controls);setContentView(view);draw()
     }
     private fun change(d:Int) { page=(page+d).coerceIn(0,(pageCount()-1).coerceAtLeast(0));draw() }
