@@ -52,7 +52,7 @@ class MainActivity : Activity() {
     private fun coverKey(file: File) = file.name.hashCode().toUInt().toString(16) + "_" + file.length() + "_" + file.lastModified()
     private fun coverFile(file: File) = File(coverDir, coverKey(file) + ".jpg")
     private fun extractCover(file: File): Bitmap? {
-        val bytes = when (file.extension.lowercase()) {
+        val bytes: ByteArray? = when (file.extension.lowercase()) {
             "cbz" -> ZipFile(file).use { zip ->
                 val first = zip.entries().asSequence().filter { !it.isDirectory && image(it.name) }
                     .minByOrNull { it.name.lowercase() }
@@ -84,20 +84,7 @@ class MainActivity : Activity() {
                     candidate
                 } finally { Archive.readFree(archive) }
             }
-            "pdf" -> {
-                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
-                    PdfRenderer(fd).use { renderer ->
-                        if (renderer.pageCount == 0) null else renderer.openPage(0).use { p ->
-                            val w = 260
-                            val h = (p.height.toDouble() * w / p.width).toInt().coerceAtLeast(1)
-                            return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
-                                it.eraseColor(Color.WHITE)
-                                p.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                            }
-                        }
-                    }
-                }
-            }
+            "pdf" -> null
             else -> null
         }
         if (bytes == null) return null
