@@ -274,11 +274,17 @@ class MainActivity : Activity() {
         entry("Export catalog") { exportCatalog() }
         entry("Close navigation") {}
         val width = minOf(dp(320), (resources.displayMetrics.widthPixels * .86f).toInt())
-        overlay.addView(panel, FrameLayout.LayoutParams(width, -1, Gravity.LEFT))
+        val drawerScroll = ScrollView(this).apply {
+            isFillViewport = true
+            isHorizontalScrollBarEnabled = false
+            addView(panel, ViewGroup.LayoutParams(-1, -2))
+        }
+        overlay.addView(drawerScroll, FrameLayout.LayoutParams(width, -1, Gravity.LEFT))
         host.addView(overlay, ViewGroup.LayoutParams(-1, -1))
+        overlay.requestApplyInsets()
         drawerOverlay = overlay; drawerOpen = true
-        panel.translationX = -width.toFloat()
-        panel.animate().translationX(0f).setDuration(240).start()
+        drawerScroll.translationX = -width.toFloat()
+        drawerScroll.animate().translationX(0f).setDuration(240).start()
     }
     private fun comicCard(file: File, generation: Int): LinearLayout {
         val width = cardWidth
