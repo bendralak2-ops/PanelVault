@@ -16,6 +16,9 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
+import android.view.GestureDetector
 import android.widget.*
 import java.io.File
 import java.util.zip.ZipFile
@@ -31,6 +34,11 @@ class MainActivity : Activity() {
     private var descriptor: ParcelFileDescriptor? = null
     private var bitmap: Bitmap? = null
     private var page = 0
+    private var sortMode = "Title A–Z"
+    private var gridMode = true
+    private var readerControlsVisible = true
+    private var readerTop: View? = null
+    private var readerBottom: View? = null
     private val coverWorker = Executors.newSingleThreadExecutor()
     private var libraryGeneration = 0
     private val coverDir by lazy { File(cacheDir, "covers").apply { mkdirs() } }
@@ -147,13 +155,33 @@ class MainActivity : Activity() {
             addView(label(if (hasProgress) "Continue • Page ${saved + 1}" else file.extension.uppercase(), 12f, 0xff93b9e9.toInt()))
         }
     }
+    private fun libraryMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        listOf("Sort: Title A–Z", "Sort: Title Z–A", "Sort: Recently added", "Sort: Recently read",
+            if (gridMode) "View: List" else "View: Cover grid", "About PanelVault").forEach { popup.menu.add(it) }
+        popup.setOnMenuItemClickListener { item ->
+            when (item.title.toString()) {
+                "About PanelVault" -> android.app.AlertDialog.Builder(this).setTitle("PanelVault")
+                    .setMessage("Offline comic library • CBZ / CBR / PDF").setPositiveButton("OK", null).show()
+                "View: List", "View: Cover grid" -> { gridMode = !gridMode; showLibrary() }
+                else -> { sortMode = item.title.toString().removePrefix("Sort: "); showLibrary() }
+            }
+            true
+        }
+        popup.show()
+    }
     private fun showLibrary() {
         libraryGeneration++
         val generation = libraryGeneration
         cleanup(); current = null
         val root = column()
         root.setPadding(dp(12), dp(12), dp(12), dp(6))
-        root.addView(label("PANELVAULT", 29f).apply { typeface = Typeface.DEFAULT_BOLD })
+        val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        heading.addView(label("PANELVAULT", 29f).apply { typeface = Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
+        val menuButton = button("☰ Menu") {}
+        menuButton.setOnClickListener { libraryMenu(menuButton) }
+        heading.addView(menuButton)
+        root.addView(heading)
         root.addView(label("YOUR OFFLINE COMIC LIBRARY", 11f, 0xff8db5e5.toInt()))
         root.addView(button("+ Import CBZ / CBR / PDF") {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -163,8 +191,13 @@ class MainActivity : Activity() {
         })
         val scroll = ScrollView(this)
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val comics = library.listFiles()?.filter { it.isFile && it.extension.lowercase() in listOf("cbz", "cbr", "pdf") }
-            ?.sortedBy { it.name.lowercase() } ?: emptyList()
+        val allComics = library.listFiles()?.filter { it.isFile && it.extension.lowercase() in listOf("cbz", "cbr", "pdf") } ?: emptyList()
+        val comics = when (sortMode) {
+            "Title Z–A" -> allComics.sortedByDescending { it.name.lowercase() }
+            "Recently added" -> allComics.sortedByDescending { it.lastModified() }
+            "Recently read" -> allComics.sortedByDescending { progress.getLong("recent_" + it.name, 0L) }
+            else -> allComics.sortedBy { it.name.lowercase() }
+        }
         val ongoing = comics.filter { progress.contains(it.name) }.sortedByDescending { progress.getLong("recent_" + it.name, 0L) }
         if (ongoing.isNotEmpty()) {
             body.addView(label("CONTINUE READING", 19f).apply { setPadding(0, dp(14), 0, dp(8)) })
@@ -175,10 +208,12 @@ class MainActivity : Activity() {
         body.addView(label("ALL COMICS  •  ${comics.size}", 19f).apply { setPadding(0, dp(16), 0, dp(8)) })
         if (comics.isEmpty()) body.addView(label("Your library is empty. Import a comic to begin.", 15f, 0xffaebdd0.toInt()))
         val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        comics.chunked(2).forEach { pair ->
+        if (gridMode) comics.chunked(2).forEach { pair ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             pair.forEach { row.addView(comicCard(it, generation)) }
             grid.addView(row)
+        } else comics.forEach { file ->
+            grid.addView(button(comicTitle(file) + " • " + file.extension.uppercase()) { open(file) })
         }
         body.addView(grid)
         scroll.addView(body)
