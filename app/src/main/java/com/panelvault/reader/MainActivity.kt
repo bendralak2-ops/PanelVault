@@ -20,6 +20,8 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.GestureDetector
 import android.widget.*
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.util.zip.ZipFile
 import me.zhanghai.android.libarchive.Archive
@@ -194,12 +196,40 @@ class MainActivity : Activity() {
             addView(label(if (hasProgress) "Continue • Page ${saved + 1}" else file.extension.uppercase(), 12f, 0xff93b9e9.toInt()))
         }
     }
+    private fun exportCatalog() {
+        val entries = JSONArray()
+        library.listFiles()?.filter { it.isFile && it.extension.lowercase() in listOf("cbz", "cbr", "pdf") }
+            ?.sortedBy { it.name.lowercase() }?.forEach { file ->
+                entries.put(JSONObject().apply {
+                    put("filename", file.name)
+                    put("title", comicTitle(file))
+                    put("series", if (file.extension.equals("pdf", true)) JSONObject.NULL else seriesName(file))
+                    put("format", file.extension.lowercase())
+                    put("bytes", file.length())
+                    put("modified", file.lastModified())
+                    put("page", if (progress.contains(file.name)) progress.getInt(file.name, 0) else JSONObject.NULL)
+                    put("lastRead", progress.getLong("recent_" + file.name, 0L))
+                })
+            }
+        val catalog = JSONObject().apply {
+            put("schemaVersion", 1)
+            put("app", "PanelVault")
+            put("exportedAt", System.currentTimeMillis())
+            put("items", entries)
+        }
+        val out = File(getExternalFilesDir(null) ?: filesDir, "panelvault-catalog.json")
+        out.writeText(catalog.toString(2))
+        android.app.AlertDialog.Builder(this).setTitle("PC sync preparation")
+            .setMessage("Catalog exported to app storage as panelvault-catalog.json. This is a metadata snapshot, not PC synchronization. Your comic files remain on the tablet.")
+            .setPositiveButton("OK", null).show()
+    }
     private fun libraryMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         listOf("Sort: Title A–Z", "Sort: Title Z–A", "Sort: Recently added", "Sort: Recently read",
-            if (gridMode) "View: List" else "View: Cover grid", "About PanelVault").forEach { popup.menu.add(it) }
+            if (gridMode) "View: List" else "View: Cover grid", "Export catalog (PC preparation)", "About PanelVault").forEach { popup.menu.add(it) }
         popup.setOnMenuItemClickListener { item ->
             when (item.title.toString()) {
+                "Export catalog (PC preparation)" -> exportCatalog()
                 "About PanelVault" -> android.app.AlertDialog.Builder(this).setTitle("PanelVault")
                     .setMessage("Offline comic library • CBZ / CBR / PDF").setPositiveButton("OK", null).show()
                 "View: List", "View: Cover grid" -> { gridMode = !gridMode; showLibrary() }
